@@ -37,6 +37,9 @@ typedef enum{
 
 class Vertex{
 	llvm::BasicBlock* BB_;	//the corresponding basic block of the current node
+    std::string FuncName_; //The name of the set of IPs to use for this function
+    std::string Inputs_;// The set of inputs of the function
+    std::string Outputs_; //The set of outputs of the function
 	double effLatHw_;	//the expectation of latencyHw_ (latencyHw_ * block frequency)
 	double effLatSw_;       //the expectation of latencySw_ (latencySw_ * block frequency)
 	double powerHw_;	//power if it is mapped to hardware
@@ -74,6 +77,9 @@ public:
 	  bool hasShadow,
 	  bool isShadow,
 	  Vertex* DupNode,
+      std::string FuncName, 
+      std::string Inputs, 
+      std::string Outputs,
 	  bool critical = false): 
 	  	BB_(BB), 
 	  	effLatHw_(eff_latencyHw),
@@ -91,6 +97,9 @@ public:
 	  	hasShadow_(hasShadow),
 	  	isShadow_(isShadow),
 	  	DupNode_(DupNode),
+        FuncName_(FuncName),
+        Inputs_(Inputs),
+        Outputs_(Outputs),
 	  	critical_(critical) { 
 	  		stamp_ = 0; 
 	  	};
@@ -110,6 +119,10 @@ public:
 	Vertex* getDupNode(){return DupNode_;}
 	bool getIsShadow(){return isShadow_;}
 	bool getHasShadow(){return hasShadow_;}
+    std::string getInputs(){return Inputs_;}
+    std::string getOutputs(){return Outputs_;}
+    std::string getFuncName() {
+        return FuncName_;}
 	int getInlineNum(){return InLineNum_;}
 	void set_isShadow(bool isShadow){isShadow_ = isShadow;}
 	void set_hasShadow(bool hasShadow){hasShadow_ = hasShadow;}
@@ -199,7 +212,10 @@ public:
 	bool simplifyTaskGraph(Vertex* V);
 	bool bbExist(llvm::BasicBlock* BB){return (bbVerTab.find(BB) != bbVerTab.end());}
 	bool vertexExist(Vertex* V){return (vertices_.find(V) != vertices_.end());}
-	void getAttrfromBB(llvm::BasicBlock * BB, double *latencyHw, double *latencySw, double *powerHw, double *powerSw, int *BRAM, int *DSP, int *FF, int *LUT, int *inLineNum, int *LoopIter);
+    void getAttrfromBB(llvm::BasicBlock * BB, double *latencyHw, double *latencySw,
+            double *powerHw, double *powerSw, int *BRAM, int *DSP, int *FF, int *LUT,
+            int *inLineNum, int *LoopIter, std::string& FuncName, std::string& Inputs,
+            std::string& Outputs);
 	void addDummySink();
 	Vertex* getSink(){return sink_;}
 	void rev_dfs(Vertex* V, std::ofstream &f, std::ofstream &f1);

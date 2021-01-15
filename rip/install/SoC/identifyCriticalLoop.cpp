@@ -21,6 +21,7 @@
 #include "llvm/IR/CallSite.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
 #include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Constant.h""
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -571,7 +572,7 @@ void taskGraph::addDummySink(){
 	VerticesItr itrs = Leaves.begin();
 	VerticesItr itre = Leaves.end();
 	std::cout << "leave size " << Leaves.size() << '\n';
-	Vertex* sink = new Vertex(nullptr, 0, 0, 0, 0, 0, 0, 0, 0, 0,curNodeId++, true, false, false, nullptr);
+	Vertex* sink = new Vertex(nullptr, 0, 0, 0, 0, 0, 0, 0, 0, 0,curNodeId++, true, false, false, nullptr, "", "", "");
 	vertices_.insert(sink);
 	for(; itrs != itre; ++itrs){
 		addEdge(*itrs, sink);
@@ -603,8 +604,8 @@ void taskGraph::generateILP(){
 	//first, generate the sv
 	f.open ("myfile.txt");
 	f1.open("nodeInfo.txt");
-	if(f == NULL) {perror("Error opening file"); return;}
-	if(f1 == NULL) {perror("Error opening file"); return;}
+	if(!f) {perror("Error opening file"); return;}
+	if(!f) {perror("Error opening file"); return;}
 	rev_dfs(sink_, f, f1);
 	clear_status();
 	f.close();
@@ -629,6 +630,9 @@ void taskGraph::rev_dfs(Vertex* V, std::ofstream &f, std::ofstream &f1){
 	f1 << V->getPowerHw() << "\t";
 	f1<< BRAM << "\t" << DSP << "\t" << FF << "\t" << LUT << "\t";
 	f1 << V->getInlineNum() << "\t";
+    f1 << V->getFuncName() << "\t";
+    f1 << V->getInputs() << "\t";
+    f1 << V->getOutputs() << "\t";
 	if(V->getIsShadow())
 		f1 << V->getDupNode()->getID();
 	else f1 << 0;
@@ -904,7 +908,10 @@ Vertex* taskGraph::allocateVertex(Function &F, BasicBlock *BB){
 	int FF = 0;
 	int inLineNum = 0;
 	int LoopIter = 0;
-	getAttrfromBB(BB, &latencyHw, &latencySw, &powerHw, &powerSw, &BRAM, &DSP, &FF, &LUT, &inLineNum, &LoopIter);
+    std::string FuncName("");
+    std::string Inputs("");
+    std::string Outputs("");
+	getAttrfromBB(BB, &latencyHw, &latencySw, &powerHw, &powerSw, &BRAM, &DSP, &FF, &LUT, &inLineNum, &LoopIter, FuncName, Inputs, Outputs);
 	double bfreq = (double)(BFI.getBlockFreq(BB).getFrequency());
 	unsigned loopDepth = LI_->getLoopDepth(BB);
 	if(loopDepth == 0) bfreq = bfreq;
@@ -928,14 +935,15 @@ Vertex* taskGraph::allocateVertex(Function &F, BasicBlock *BB){
 	  bfreq = bfreq / base_freq;
 	double eff_latHw = latencyHw * bfreq;
 	double eff_latSw = latencySw * bfreq;
-	Vertex *node = new Vertex(BB, eff_latHw, eff_latSw, powerHw, powerSw, BRAM, DSP, FF, LUT, inLineNum, curNodeId++, false, false, false, nullptr );
+	Vertex *node = new Vertex(BB, eff_latHw, eff_latSw, powerHw, powerSw, BRAM, DSP, FF, LUT, inLineNum, curNodeId++, false, false, false, nullptr, FuncName, Inputs, Outputs);
 	bbVerTab[BB] = node;
 	vertices_.insert(node);
 	return node;
 }
 
 //check whether there is store lat, power, area information, given a basic block, traverse the instructions 
-void taskGraph::getAttrfromBB(BasicBlock * BB, double *latencyHw, double *latencySw, double *powerHw, double *powerSw, int *BRAM, int *DSP, int *FF, int *LUT, int *inLineNum, int *LoopIter){
+void taskGraph::getAttrfromBB(BasicBlock * BB, double *latencyHw, double *latencySw, double *powerHw, double *powerSw, int *BRAM, int *DSP, int *FF, int *LUT, int *inLineNum, int *LoopIter, 
+        std::string& FuncName, std::string& Inputs, std::string& Outputs){
 	for(Instruction &I : BB->getInstList()){
 		//first, whether it is a store instruction
 		if(isa<StoreInst>(I)){   
@@ -951,6 +959,21 @@ void taskGraph::getAttrfromBB(BasicBlock * BB, double *latencyHw, double *latenc
 			bool IsFF = SR.startswith(StringRef("FF"));
 			bool IsLUT = SR.startswith(StringRef("LUT"));
 			bool IsLoopIter = SR.startswith(StringRef("LoopIter"));
+            bool isFuncName = SR.startswith(StringRef("FuncName"));
+            bool isInputs = SR.startswith(StringRef("Inputs"));
+            bool isOutputs = SR.startswith(StringRef("Outputs"));
+
+            if(isFuncName || isInputs || isOutputs){
+                if(isa<ConstantExpr>(I.getOperand(0))){
+                    Instruction *NewU = dyn_cast<ConstantExpr>(I.getOperand(0))->getAsInstruction();
+                    std::string sr = dyn_cast<ConstantDataArray>(dyn_cast<GlobalVariable>(NewU->getOperand(0))->getInitializer())->getAsString();
+                    NewU->dropAllReferences();
+                    if(isFuncName) FuncName = sr;
+                    else if(isInputs) Inputs = sr;
+                    else Outputs = sr;
+                }
+            }
+
 			if(IsInLineNum || IsBRAM || IsDSP || IsFF || IsLUT){
 				ConstantInt* INTC = dyn_cast<ConstantInt>(I.getOperand(0));
 				assert(INTC && "no data assigned to inLineNum");
@@ -1049,8 +1072,13 @@ Vertex* taskGraph::deepCopyVertex(Vertex *V){
 	bool isSink = V->getSink();
 	bool isShadow = V->getIsShadow();
 	bool hasShadow = V->getHasShadow();
+    auto FuncName = V->getFuncName();
+    auto Inputs = V->getInputs();
+    auto Outputs = V->getOutputs();
 	Vertex* dupNode = V->getDupNode();
-  Vertex *node = new Vertex(BB, latencyHw, latencySw, powerHw, powerSw, BRAM, DSP, FF, LUT, inLineNum, curNodeId++,isSink, hasShadow, isShadow, dupNode, critical);
+    Vertex *node = new Vertex(BB, latencyHw, latencySw, powerHw, powerSw,
+            BRAM, DSP, FF, LUT, inLineNum, curNodeId++,isSink, hasShadow,
+            isShadow, dupNode, FuncName, Inputs, Outputs, critical);
   vertices_.insert(node);
   return node;
 }
